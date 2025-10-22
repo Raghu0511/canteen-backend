@@ -207,6 +207,127 @@ app.post("/api/wallet/add", (req, res) => {
   );
 });
 
+// ================== STAFF: Get menu items ==================
+app.get("/api/staff/menu", (req, res) => {
+  db.query("SELECT item_id, name, price, availability FROM menu_items ORDER BY name", (err, results) => {
+    if (err) return res.status(500).json({ message: "DB error", error: err });
+    res.json(results);
+  });
+});
+
+// ================== STAFF: Update menu item availability ==================
+app.put("/api/staff/menu/:itemId/availability", (req, res) => {
+  const itemId = req.params.itemId;
+  const { availability } = req.body; // expected boolean or 0/1
+
+  if (availability === undefined) return res.status(400).json({ message: "availability required" });
+
+  db.query("UPDATE menu_items SET availability = ? WHERE item_id = ?", [availability, itemId], (err, result) => {
+    if (err) return res.status(500).json({ message: "DB error", error: err });
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Item not found" });
+    res.json({ message: "Availability updated ✅", itemId, availability });
+  });
+});
+
+// ================== STAFF: Get token slots ==================
+app.get("/api/staff/tokens", (req, res) => {
+  db.query(
+    `SELECT ts.token_id, ts.order_id, ts.status, ts.last_updated, o.token_no, o.status as order_status
+     FROM token_slots ts
+     LEFT JOIN orders o ON ts.order_id = o.order_id
+     ORDER BY ts.token_id`,
+    (err, results) => {
+      if (err) return res.status(500).json({ message: "DB error", error: err });
+      res.json(results);
+    }
+  );
+});
+
+// ================== STAFF: Update token slot status ==================
+app.put("/api/staff/tokens/:tokenId/status", (req, res) => {
+  const tokenId = req.params.tokenId;
+  const { status } = req.body; // expected 'Gray' | 'Red' | 'Green'
+
+  if (!status) return res.status(400).json({ message: "status required" });
+
+  db.query("UPDATE token_slots SET status = ?, last_updated = NOW() WHERE token_id = ?", [status, tokenId], (err, result) => {
+    if (err) return res.status(500).json({ message: "DB error", error: err });
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Token slot not found" });
+    res.json({ message: "Token status updated ✅", tokenId, status });
+  });
+});
+
+// ================== MANAGER: Fetch Student by Scanned ID ==================
+app.post("/api/manager/fetch-student", (req, res) => {
+  let { scannedId } = req.body;
+  if (!scannedId) {
+    return res.status(400).json({ message: "scannedId is required" });
+  }
+
+  // Remove prefix if exists (e.g., BL.SC.U4CSE24142 → U4CSE24142)
+  const cleanedRegNo = scannedId.replace(/^BL\.SC\./i, "");
+
+  db.query(
+    "SELECT regNo, name, wallet_balance FROM students WHERE regNo = ?",
+    [cleanedRegNo],
+    (err, results) => {
+      if (err)
+        return res.status(500).json({ message: "DB error", error: err });
+      if (results.length === 0)
+        return res.status(404).json({ message: "Student not found" });
+
+      res.json({
+        message: "Student fetched successfully ✅",
+        student: results[0],
+      });
+    }
+  );
+});
+
+// ================== MANAGER: Update Wallet Balance ==================
+app.post("/api/manager/update-wallet", (req, res) => {
+  const { regNo, amount } = req.body;
+
+  if (!regNo || !amount) {
+    return res.status(400).json({ message: "regNo and amount are required" });
+  }
+
+  db.query(
+    "UPDATE students SET wallet_balance = wallet_balance + ? WHERE regNo = ?",
+    [amount, regNo],
+    (err, result) => {
+      if (err)
+        return res.status(500).json({ message: "DB error", error: err });
+      if (result.affectedRows === 0)
+        return res.status(404).json({ message: "Student not found" });
+
+      db.query(
+        "INSERT INTO wallet_transactions (regNo, amount, type) VALUES (?, ?, 'credit')",
+        [regNo, amount],
+        (err2) => {
+          if (err2)
+            return res.status(500).json({ message: "Transaction failed", error: err2 });
+
+          // Fetch updated balance
+          db.query(
+            "SELECT wallet_balance FROM students WHERE regNo = ?",
+            [regNo],
+            (err3, walletRes) => {
+              if (err3)
+                return res.status(500).json({ message: "DB error", error: err3 });
+
+              res.json({
+                message: `₹${amount} added successfully ✅`,
+                newBalance: walletRes[0].wallet_balance,
+              });
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
 // ================== STEP 12: Start Server ==================
 const PORT = 5000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
